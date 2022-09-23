@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 /*
 Memory Map
@@ -91,6 +94,7 @@ type CPU struct {
 	CS     int          // Clock Speed
 	Vr     [64][32]byte // V-ram display size
 	Keys   [16]uint8    // Keys from keyboard
+	Clock  <-chan time.Time
 }
 
 type UnknownOpcode struct {
@@ -105,6 +109,7 @@ func NewCPU() *CPU {
 		I:      0x000,
 		Opcode: 0,
 		SP:     0,
+		Clock:  time.Tick(time.Second / 60),
 	}
 }
 
@@ -162,6 +167,57 @@ func (c *CPU) Emulate() {
 
 			c.PC += 2
 
+			break
+		case 0x4000:
+			// Skip the next instruction if Vx != kk
+
+			// The interpreter compares register Vx to kk
+			// if they are not equal, increments the PC by 2.
+			x := (c.Opcode & 0x0F00) >> 8
+			kk := byte(c.Opcode)
+
+			if c.Vx[x] != kk {
+				c.PC += 2
+			}
+
+			c.PC += 2
+
+			break
+		case 0x5000:
+			// Skip next instruction if Vx = Vy
+			x := (c.Opcode & 0x0F00) >> 8
+			y := (c.Opcode & 0x00F0) >> 4
+
+			c.PC += 2
+
+			if c.Vx[x] == c.Vx[y] {
+				c.PC += 2
+			}
+
+			break
+		case 0x6000:
+			// set Vx = kk
+			// The interpreter puts the value kk into
+			// register Vx
+			x := (c.Opcode & 0x0F00) >> 8
+			kk := byte(c.Opcode)
+
+			c.Vx[x] = kk
+
+			c.PC += 2
+
+			break
+		case 0x7000:
+			// set Vx = Vx + kk
+
+			// Adds the value kk to the value of register Vx
+			// then stores the result in Vx
+			x := (c.Opcode & 0x0F00) >> 8
+			kk := byte(c.Opcode)
+
+			c.Vx[x] = c.Vx[x] + kk
+
+			c.PC += 2
 			break
 		}
 	}
