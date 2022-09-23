@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 /*
 Memory Map
 
@@ -57,7 +59,7 @@ Keypad       Keyboard
 */
 
 // fonts to display
-var fontSet = []uint8{
+var fontSet = [80]uint8{
 	0xF0, 0x90, 0x90, 0x90, 0xF0, //0
 	0x20, 0x60, 0x20, 0x20, 0x70, //1
 	0xF0, 0x10, 0xF0, 0x80, 0xF0, //2
@@ -77,31 +79,18 @@ var fontSet = []uint8{
 }
 
 type CPU struct {
-	Memory [4096]byte // memory ram
-	Opcode uint16     // current opcode
-	I      uint16     // Index stack - (rightmost) 12 bits are usually used
-	Vx     [16]uint8  // Vx registers
-	PC     uint16     // Program Counter
-	SP     uint16     // Stack Pointer
-	S      [16]uint16 // Stack
-	DT     uint8      // Delay Timer
-	ST     uint8      // Sound Timer
-	CS     int        // Clock Speed
-}
-
-func (c *CPU) LoadRom(rom []byte) {
-	for m := 0; m < 4096; m++ {
-		c.Memory[m] = 0x00
-	}
-	for index, b := range rom {
-		c.Memory[index+0x200] = b
-	}
-}
-
-type Chip8 struct {
-	cpu     CPU
-	display [64 * 32]uint8
-	Keys    [16]uint8 // keyboard
+	Memory [4096]byte   // memory ram
+	Opcode uint16       // current opcode
+	I      uint16       // Index stack - (rightmost) 12 bits are usually used
+	Vx     [16]uint8    // Vx registers
+	PC     uint16       // Program Counter
+	SP     uint16       // Stack Pointer
+	S      [16]uint16   // Stack
+	DT     uint8        // Delay Timer
+	ST     uint8        // Sound Timer
+	CS     int          // Clock Speed
+	Vr     [64][32]byte // V-ram display size
+	Keys   [16]uint8    // Keys from keyboard
 }
 
 type UnknownOpcode struct {
@@ -111,8 +100,78 @@ type UnknownOpcode struct {
 
 func NewCPU() *CPU {
 	return &CPU{
-		PC: 0x200,
-		CS: 60,
-		I:  0x000,
+		PC:     0x200,
+		CS:     60,
+		I:      0x000,
+		Opcode: 0,
+		SP:     0,
 	}
+}
+
+func (c *CPU) Emulate() {
+	fmt.Println(".... Fetching Opcode......")
+
+	switch c.Opcode & 0xF000 {
+	case 0x0000:
+		switch c.Opcode & 0x000F {
+		case 0x00E0:
+			fmt.Println(".....Clearing the screen.....")
+			// clear screen
+
+			// increment the PC by two
+			c.PC += 2
+			break
+		case 0x00EE:
+			// Return from a subroutine
+
+			// The interpreter sets the program counter
+			// to the address at the top of the Stack
+			c.PC = c.S[c.SP]
+			// Then subtracts 1 from the stack pointer
+			c.SP--
+
+			c.PC += 2
+			break
+		case 0x1000:
+			// Jump to location nnn
+			// The interpreter sets the program counter to nnn
+			c.PC = c.Opcode & 0x0FFF
+			break
+		case 0x2000:
+			// Call subroutine at nnn
+			// The interpreter increments the Stack Pointer
+			c.SP++
+			// Then, puts the current PC on the top of the stack.
+			c.S[c.SP] = c.PC
+			// The PC is then set to nnn
+			c.PC = c.Opcode & 0x0FFF
+
+			break
+		case 0x3000:
+			// Skip the next instruction if Vx = kk
+
+			// The interpreter compares register Vx to kk,
+			// and if they are equal, increments the program
+			// counter by 2.
+			x := (c.Opcode & 0x0F00) >> 8
+			kk := byte(c.Opcode)
+
+			if c.Vx[x] == kk {
+				c.PC += 2
+			}
+
+			c.PC += 2
+
+			break
+		}
+	}
+}
+
+// GetOpcode is the main method to get the next opcode.
+// An opcode is 2-bytes wide, this means that when reading
+// from memory, we have to combine two bytes into one 16-bit DS.
+func (c *CPU) GetOpcode() {
+	fmt.Println("Fetching the next opcode.")
+
+	c.Opcode = uint16(c.Memory[c.PC]<<8) | uint16(c.Memory[c.PC+1])
 }
