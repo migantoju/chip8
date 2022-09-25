@@ -25,7 +25,8 @@ func main() {
 	}
 
 	if int64(len(chip8.Memory)-0x200) < fStat.Size() {
-		fmt.Errorf("Program size is bigger than memory.")
+		fmt.Println("Program size is bigger than memory")
+		panic("Program size is bigger than memory")
 	}
 
 	buffer := make([]byte, fStat.Size())
@@ -45,7 +46,7 @@ func main() {
 	}
 	defer sdl.Quit()
 
-	window, err := sdl.CreateWindow("Chip-8",
+	window, err := sdl.CreateWindow("Chip-8"+file.Name(),
 		sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
 		64*10, 32*10, sdl.WINDOW_SHOWN)
 
@@ -68,17 +69,17 @@ func main() {
 
 		// Draw only if there are pixels to draw
 		if chip8.Draw() {
-			canvas.SetDrawColor(255, 0, 0, 255)
+			canvas.SetDrawColor(0, 0, 0, 255)
 			canvas.Clear()
 
 			// Display buffer and render
 			v := chip8.Buffer()
-			for i := 0; i < len(v); i++ {
-				for j := 0; j < len(v[i]); j++ {
+			for j := 0; j < len(v); j++ {
+				for i := 0; i < len(v[j]); i++ {
 					if v[j][i] != 0 {
 						canvas.SetDrawColor(255, 255, 0, 255)
 					} else {
-						canvas.SetDrawColor(255, 0, 0, 255)
+						canvas.SetDrawColor(0, 0, 0, 255)
 					}
 					canvas.FillRect(&sdl.Rect{
 						Y: int32(j) * 10,
@@ -291,10 +292,11 @@ type CPU struct {
 	DT     uint8        // Delay Timer
 	ST     uint8        // Sound Timer
 	CS     int          // Clock Speed
-	Vr     [64][32]byte // V-ram display size
+	Vr     [32][64]byte // V-ram display size
 	Keys   [16]uint8    // Keys from keyboard
 	Clock  <-chan time.Time
-	ED     bool // Execute Draw
+	ED     bool          // Execute Draw
+	Stop   chan struct{} // Channel used to indicate shutdown
 }
 
 type UnknownOpcode struct {
@@ -326,14 +328,14 @@ func (c *CPU) Emulate() {
 	// An opcode is 2-bytes wide, this means that when reading
 	// from memory, we have to combine two bytes into one 16-bit DS.
 
-	// c.Opcode = uint16(c.Memory[c.PC]<<8) | uint16(c.Memory[c.PC+1])
+	opcode := c.getOpcode()
 
-	fmt.Printf("Fetched opcode: %X", c.Opcode)
+	fmt.Printf("Fetched opcode: 0x%04X\n", opcode)
 
-	switch c.Opcode & 0xF000 {
+	switch opcode & 0xF000 {
 	case 0x0000:
-		switch c.Opcode & 0x000F {
-		case 0x00E0:
+		switch opcode & 0x000F {
+		case 0x0000:
 			fmt.Println(".....Clearing the screen.....")
 			// clear screen
 			for i := 0; i < len(c.Vr); i++ {
@@ -343,8 +345,9 @@ func (c *CPU) Emulate() {
 			}
 			// increment the PC by two
 			c.PC += 2
+			c.ED = true
 			break
-		case 0x00EE:
+		case 0x000E:
 			// Return from a subroutine
 
 			// The interpreter sets the program counter
@@ -356,12 +359,12 @@ func (c *CPU) Emulate() {
 			c.PC += 2
 			break
 		default:
-			fmt.Printf("Invalid opcode %x", c.Opcode)
+			fmt.Printf("Invalid opcode 0x%04X\n", opcode)
 		}
 	case 0x1000:
 		// Jump to location nnn
 		// The interpreter sets the program counter to nnn
-		c.PC = c.Opcode & 0x0FFF
+		c.PC = opcode & 0x0FFF
 		break
 	case 0x2000:
 		// Call subroutine at nnn
@@ -370,7 +373,7 @@ func (c *CPU) Emulate() {
 		// Then, puts the current PC on the top of the stack.
 		c.S[c.SP] = c.PC
 		// The PC is then set to nnn
-		c.PC = c.Opcode & 0x0FFF
+		c.PC = opcode & 0x0FFF
 
 		break
 	case 0x3000:
@@ -379,8 +382,8 @@ func (c *CPU) Emulate() {
 		// The interpreter compares register Vx to kk,
 		// and if they are equal, increments the program
 		// counter by 2.
-		x := (c.Opcode & 0x0F00) >> 8
-		kk := byte(c.Opcode)
+		x := (opcode & 0x0F00) >> 8
+		kk := byte(opcode)
 
 		if c.V[x] == kk {
 			c.PC += 2
@@ -394,8 +397,8 @@ func (c *CPU) Emulate() {
 
 		// The interpreter compares register Vx to kk
 		// if they are not equal, increments the PC by 2.
-		x := (c.Opcode & 0x0F00) >> 8
-		kk := byte(c.Opcode)
+		x := (opcode & 0x0F00) >> 8
+		kk := byte(opcode)
 
 		if c.V[x] != kk {
 			c.PC += 2
@@ -406,22 +409,21 @@ func (c *CPU) Emulate() {
 		break
 	case 0x5000:
 		// Skip next instruction if Vx = Vy
-		x := (c.Opcode & 0x0F00) >> 8
-		y := (c.Opcode & 0x00F0) >> 4
-
-		c.PC += 2
+		x := (opcode & 0x0F00) >> 8
+		y := (opcode & 0x00F0) >> 4
 
 		if c.V[x] == c.V[y] {
 			c.PC += 2
 		}
 
+		c.PC += 2
 		break
 	case 0x6000:
 		// set Vx = kk
 		// The interpreter puts the value kk into
 		// register Vx
-		x := (c.Opcode & 0x0F00) >> 8
-		kk := byte(c.Opcode)
+		x := (opcode & 0x0F00) >> 8
+		kk := byte(opcode)
 
 		c.V[x] = kk
 
@@ -433,17 +435,17 @@ func (c *CPU) Emulate() {
 
 		// Adds the value kk to the value of register Vx
 		// then stores the result in Vx
-		x := (c.Opcode & 0x0F00) >> 8
-		kk := byte(c.Opcode)
+		x := (opcode & 0x0F00) >> 8
+		kk := byte(opcode)
 
 		c.V[x] = c.V[x] + kk
 
 		c.PC += 2
 		break
 	case 0x8000:
-		x := (c.Opcode & 0x0F00) >> 8
-		y := (c.Opcode & 0x00F0) >> 4
-		switch c.Opcode & 0x000F {
+		x := (opcode & 0x0F00) >> 8
+		y := (opcode & 0x00F0) >> 4
+		switch opcode & 0x000F {
 		case 0x0000:
 			// set Vx = Vy
 			c.V[x] = c.V[y]
@@ -532,9 +534,9 @@ func (c *CPU) Emulate() {
 			break
 		}
 	case 0x9000:
-		x := (c.Opcode & 0x0F00) >> 8
-		y := (c.Opcode & 0x00F0) >> 4
-		switch c.Opcode & 0x000F {
+		x := (opcode & 0x0F00) >> 8
+		y := (opcode & 0x00F0) >> 4
+		switch opcode & 0x000F {
 		case 0x0000:
 			if c.V[x] != c.V[y] {
 				c.PC += 2
@@ -543,23 +545,23 @@ func (c *CPU) Emulate() {
 			c.PC += 2
 			break
 		default:
-			fmt.Printf("Invalid Opcode: %X", c.Opcode)
+			fmt.Printf("Invalid Opcode: 0x%04X\n", opcode)
 		}
 	case 0xA000:
 		// Set I = nnn
 		// The value of register I is set to nnn
-		c.I = c.Opcode & 0x0FFF
+		c.I = opcode & 0x0FFF
 		c.PC += 2
 		break
 	case 0xB000:
 		// Jump to location nnn + V0
 		// The program counter is set to nnn plus the value of V0
-		c.PC = c.Opcode&0x0FFF + uint16(c.V[0x0])
+		c.PC = opcode&0x0FFF + uint16(c.V[0x0])
 		break
 	case 0xC000:
 		// Set Vx = random byte AND kk
-		x := (c.Opcode & 0x0F00) >> 8
-		kk := byte(c.Opcode)
+		x := (opcode & 0x0F00) >> 8
+		kk := byte(opcode)
 
 		c.V[x] = kk + randomByte()
 		c.PC += 2
@@ -569,21 +571,21 @@ func (c *CPU) Emulate() {
 		// I at (Vx, Vy), set VF=collision.
 		var carry byte
 
-		x := c.V[(c.Opcode&0x0F00)>>8]
-		y := c.V[(c.Opcode&0x00F0)>>4]
-		h := c.Opcode & 0x000F
+		x := c.V[(opcode&0x0F00)>>8]
+		y := c.V[(opcode&0x00F0)>>4]
+		h := opcode & 0x000F
 
 		var i uint16 = 0
 		var j uint16 = 0
 
-		for i = 0; i < h; i++ {
+		for j = 0; j < h; j++ {
 			p := c.Memory[c.I+j]
-			for j = 0; j < 8; j++ {
-				if (p & (0x80 >> j)) != 0 {
-					if c.Vr[(x + uint8(i))][y+uint8(j)] == 1 {
+			for i = 0; i < 8; i++ {
+				if (p & (0x80 >> i)) != 0 {
+					if c.Vr[(y + uint8(j))][x+uint8(i)] == 1 {
 						carry = 1
 					}
-					c.Vr[(x + uint8(i))][(y + uint8(j))] ^= 1
+					c.Vr[(y + uint8(j))][(x + uint8(i))] ^= 1
 				}
 			}
 
@@ -593,12 +595,12 @@ func (c *CPU) Emulate() {
 		c.ED = true
 		break
 	case 0xE000:
-		x := (c.Opcode & 0x0F00) >> 8
-		switch c.Opcode & 0x00FF {
+		x := (opcode & 0x0F00) >> 8
+		switch opcode & 0x00FF {
 		case 0x009E:
 			// Skip the next instruction if key with the value of Vx is
 			// pressed.
-			fmt.Println("Opcode %X", c.Opcode)
+			fmt.Printf("Opcode %X\n", opcode)
 			if c.Keys[c.V[x]] == 1 {
 				c.PC += 4
 			} else {
@@ -613,11 +615,11 @@ func (c *CPU) Emulate() {
 			}
 			break
 		default:
-			fmt.Printf(".... 0xE000, invalid Opcode %X ......", c.Opcode)
+			fmt.Printf(".... 0xE000, invalid Opcode %X ......", opcode)
 		}
 	case 0xF000:
-		x := (c.Opcode & 0x0F00) >> 8
-		switch c.Opcode & 0x00FF {
+		x := (opcode & 0x0F00) >> 8
+		switch opcode & 0x00FF {
 		case 0x0007:
 			// set Vx = delay timer value.
 			// The value of DT is placed into Vx
@@ -697,8 +699,16 @@ func (c *CPU) Emulate() {
 			c.PC += 2
 			break
 		default:
-			fmt.Printf("Unknown decoded Opcode %X", c.Opcode)
+			fmt.Printf("Unknown decoded Opcode 0x%04X\n", opcode)
 		}
+	}
+
+	if c.DT > 0 {
+		c.DT--
+	}
+
+	if c.ST > 0 {
+		c.ST--
 	}
 }
 
@@ -713,7 +723,7 @@ func (c *CPU) Draw() bool {
 	return ableToDraw
 }
 
-func (c *CPU) Buffer() [64][32]uint8 {
+func (c *CPU) Buffer() [32][64]uint8 {
 	return c.Vr
 }
 
@@ -726,9 +736,13 @@ func (c *CPU) SetKey(num uint8, pressed bool) {
 }
 
 func (c *CPU) getOpcode() uint16 {
-	return uint16(c.Memory[c.PC]<<8) | uint16(c.Memory[c.PC+1])
+	return uint16(c.Memory[c.PC])<<8 | uint16(c.Memory[c.PC+1])
 }
 
 func randomByte() byte {
 	return byte(rand.New(rand.NewSource(time.Now().UnixNano())).Intn(255))
+}
+
+func (c *CPU) Shutdown() {
+	close(c.Stop)
 }
