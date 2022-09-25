@@ -1,6 +1,61 @@
 package main
 
-import "C"
+/*
+Memory Map
+
+---------------+= 0xFFF (4095) End of Chip-8 RAM
+|               |
+|               |
+|               |
+|               |
+|               |
+| 0x200 to 0xFFF|
+|     Chip-8    |
+| Program / Data|
+|     Space     |
+|               |
+|               |
+|               |
++- - - - - - - -+= 0x600 (1536) Start of ETI 660 Chip-8 programs
+|               |
+|               |
+|               |
++---------------+= 0x200 (512) Start of most Chip-8 programs
+| 0x000 to 0x1FF|
+| Reserved for  |
+|  interpreter  |
++---------------+= 0x000 (0) Start of Chip-8 RAM
+
+Basic CPU loop
+1. Fetch Opcode
+2. Decode Opcode
+3. Execute Opcode
+4. Update timers
+
+Program Counter (PC) starts at 0x200
+
+- Clear display
+- Clear stack
+- Clear registers V0-VF
+- Clear memory
+- Load fontset
+- reset timers
+
+We need to low the clock speed to 60 Opcodes per second (60Hz)
+
+Keypad       Keyboard
++-+-+-+-+    +-+-+-+-+
+|1|2|3|C|    |1|2|3|4|
++-+-+-+-+    +-+-+-+-+
+|4|5|6|D|    |Q|W|E|R|
++-+-+-+-+ => +-+-+-+-+
+|7|8|9|E|    |A|S|D|F|
++-+-+-+-+    +-+-+-+-+
+|A|0|B|F|    |Z|X|C|V|
++-+-+-+-+    +-+-+-+-+
+
+*/
+
 import (
 	"bytes"
 	"fmt"
@@ -25,7 +80,6 @@ func main() {
 	}
 
 	if int64(len(chip8.Memory)-0x200) < fStat.Size() {
-		fmt.Println("Program size is bigger than memory")
 		panic("Program size is bigger than memory")
 	}
 
@@ -204,62 +258,6 @@ func main() {
 		}
 	}
 }
-
-/*
-Memory Map
-
----------------+= 0xFFF (4095) End of Chip-8 RAM
-|               |
-|               |
-|               |
-|               |
-|               |
-| 0x200 to 0xFFF|
-|     Chip-8    |
-| Program / Data|
-|     Space     |
-|               |
-|               |
-|               |
-+- - - - - - - -+= 0x600 (1536) Start of ETI 660 Chip-8 programs
-|               |
-|               |
-|               |
-+---------------+= 0x200 (512) Start of most Chip-8 programs
-| 0x000 to 0x1FF|
-| Reserved for  |
-|  interpreter  |
-+---------------+= 0x000 (0) Start of Chip-8 RAM
-
-Basic CPU loop
-1. Fetch Opcode
-2. Decode Opcode
-3. Execute Opcode
-4. Update timers
-
-Program Counter (PC) starts at 0x200
-
-- Clear display
-- Clear stack
-- Clear registers V0-VF
-- Clear memory
-- Load fontset
-- reset timers
-
-We need to low the clock speed to 60 Opcodes per second (60Hz)
-
-Keypad       Keyboard
-+-+-+-+-+    +-+-+-+-+
-|1|2|3|C|    |1|2|3|4|
-+-+-+-+-+    +-+-+-+-+
-|4|5|6|D|    |Q|W|E|R|
-+-+-+-+-+ => +-+-+-+-+
-|7|8|9|E|    |A|S|D|F|
-+-+-+-+-+    +-+-+-+-+
-|A|0|B|F|    |Z|X|C|V|
-+-+-+-+-+    +-+-+-+-+
-
-*/
 
 // fonts to display
 var fontSet = [80]uint8{
@@ -701,6 +699,8 @@ func (c *CPU) Emulate() {
 		default:
 			fmt.Printf("Unknown decoded Opcode 0x%04X\n", opcode)
 		}
+	default:
+		fmt.Printf("Unknown opcode to decode 0x%04X\n", opcode)
 	}
 
 	if c.DT > 0 {
